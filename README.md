@@ -10,6 +10,7 @@ Built for Freestyle Grapplerz, the app reviews Smoothcomp CSV data or mapped CSV
 - Map columns from other CSV-based registration systems.
 - Try the app instantly with built-in demo data.
 - Find single-athlete divisions.
+- Find divisions where 2+ athletes are all from the same academy.
 - Suggest possible merge divisions.
 - Score matches by entry type, weight, age, skill or belt, bracket size, and academy mix.
 - Let staff adjust safety limits and scoring weights.
@@ -26,6 +27,7 @@ EZ Brackets starts each possible match at 100 points, then adjusts the score bas
 - Skill or belt difference.
 - Whether the target bracket has two or more athletes.
 - Whether the resulting bracket would be all one academy.
+- Whether a same-academy bracket can be merged into a nearby mixed-academy bracket.
 
 Recommendations are suggestions only. Tournament staff should still use coach or parent approval and safety judgment before moving athletes.
 

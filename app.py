@@ -652,6 +652,105 @@ def make_recommendations(
     return recs[first_cols + rest]
 
 
+def score_conflict_candidate(problem, cand, allow_entry_crossover=False, scoring_settings=None):
+    problem_as_single = {
+        "entry_clean": problem.get("entry", ""),
+        "skill_clean": problem.get("skill", ""),
+        "age_clean": problem.get("age", ""),
+        "weight_clean": problem.get("weight", ""),
+        "academy_clean": problem.get("academies", ""),
+    }
+    return score_candidate(problem_as_single, cand, allow_entry_crossover, scoring_settings)
+
+
+def make_academy_conflict_recommendations(
+    df,
+    only_approved=True,
+    min_target_size=1,
+    top_n=3,
+    allow_entry_crossover=False,
+    scoring_settings=None,
+):
+    working = df.copy()
+
+    if only_approved and "approved_clean" in working.columns:
+        approved_mask = working["approved_clean"].astype(str).str.lower().eq("approved")
+        if approved_mask.any():
+            working = working[approved_mask]
+
+    summary = group_summary(working)
+    conflict_groups = summary[(summary["athletes"] >= 2) & (summary["academy_count"] == 1)].copy()
+    target_groups = summary[summary["athletes"] >= min_target_size].copy()
+
+    rows = []
+    for _, problem in conflict_groups.iterrows():
+        candidates = target_groups[target_groups["group"] != problem["group"]].copy()
+        scored = []
+
+        for _, cand in candidates.iterrows():
+            result = score_conflict_candidate(problem, cand, allow_entry_crossover, scoring_settings)
+            if result is None:
+                continue
+
+            score, why, breakdown, safety_flag, weight_diff, age_diff, skill_diff, academy_warning, academy_mix = result
+            if int(cand.get("academy_count", 0)) >= 2:
+                score = min(100, score + 8)
+                why = why + "; target already has mixed academies"
+                breakdown = breakdown + " | Mixed target bracket: +8"
+            elif int(cand.get("academy_count", 0)) <= 1:
+                score = max(0, score - 10)
+                why = why + "; target is also same-academy or missing academy variety"
+                breakdown = breakdown + " | Target lacks academy variety: -10"
+
+            scored.append({
+                "Rank": 0,
+                "Issue": "All same academy",
+                "Quality": quality_label(score, safety_flag),
+                "Match Score": score,
+                "Problem Division": problem["group"],
+                "Suggested Division": cand["group"],
+                "Problem Athletes": problem["athletes"],
+                "Target Athletes": cand["athletes"],
+                "Problem Academy": problem["academies"],
+                "Academy Mix After Merge": academy_mix,
+                "Safety Flag": safety_flag,
+                "Weight Difference": round(weight_diff, 1) if weight_diff != 999 else "",
+                "Age Difference": age_diff if age_diff != 999 else "",
+                "Skill Difference": skill_diff if skill_diff != 999 else "",
+                "Scoring Breakdown": breakdown,
+                "Why": why,
+                "Problem Names": problem["names"],
+                "Target Names": cand["names"],
+                "Problem Entry": problem.get("entry", ""),
+                "Suggested Entry": cand.get("entry", ""),
+                "Problem Skill/Belt": problem.get("skill", ""),
+                "Suggested Skill/Belt": cand.get("skill", ""),
+                "Problem Age": problem.get("age", ""),
+                "Suggested Age": cand.get("age", ""),
+                "Problem Weight": problem.get("weight", ""),
+                "Suggested Weight": cand.get("weight", ""),
+            })
+
+        scored = sorted(scored, key=lambda x: x["Match Score"], reverse=True)[:top_n]
+
+        for rank, row in enumerate(scored, start=1):
+            row["Rank"] = rank
+            rows.append(row)
+
+    recs = pd.DataFrame(rows)
+    if recs.empty:
+        return recs
+
+    first_cols = [
+        "Rank", "Issue", "Quality", "Match Score", "Problem Division", "Suggested Division",
+        "Problem Athletes", "Target Athletes", "Problem Academy", "Academy Mix After Merge",
+        "Safety Flag", "Weight Difference", "Age Difference", "Skill Difference",
+        "Scoring Breakdown", "Why",
+    ]
+    rest = [c for c in recs.columns if c not in first_cols]
+    return recs[first_cols + rest]
+
+
 def style_quality_rows(df):
     def row_style(row):
         warning = str(row.get("Academy Warning", "")).lower()
@@ -680,10 +779,12 @@ def style_quality_rows(df):
     return df.style.apply(row_style, axis=1)
 
 
-def to_excel_bytes(recommendations, singles, summary):
+def to_excel_bytes(recommendations, singles, summary, academy_conflicts=None):
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         recommendations.to_excel(writer, index=False, sheet_name="Recommendations")
+        if academy_conflicts is not None and not academy_conflicts.empty:
+            academy_conflicts.to_excel(writer, index=False, sheet_name="Academy Conflicts")
         singles.to_excel(writer, index=False, sheet_name="Singles")
         summary.to_excel(writer, index=False, sheet_name="All Groups")
     return output.getvalue()
@@ -699,15 +800,33 @@ def demo_raw_dataframe():
         },
         {
             "Name": "Jordan Lee",
-            "Academy": "Northside MMA",
+            "Academy": "Oliveira Grappling",
             "Status": "Approved",
-            "Group": "No-Gi / Beginner / Teen / 130 - 140 lbs",
+            "Group": "No-Gi / Beginner / Youth 10-11 / 50 - 59 lbs",
         },
         {
             "Name": "Sam Patel",
+            "Academy": "Oliveira Grappling",
+            "Status": "Approved",
+            "Group": "No-Gi / Beginner / Youth 10-11 / 50 - 59 lbs",
+        },
+        {
+            "Name": "Cameron Diaz",
             "Academy": "West End Grappling",
             "Status": "Approved",
-            "Group": "No-Gi / Beginner / Teen / 130 - 140 lbs",
+            "Group": "No-Gi / Beginner / Youth 10-11 / 60 - 69 lbs",
+        },
+        {
+            "Name": "Devon Brooks",
+            "Academy": "Northside MMA",
+            "Status": "Approved",
+            "Group": "No-Gi / Beginner / Youth 10-11 / 60 - 69 lbs",
+        },
+        {
+            "Name": "Eli Carter",
+            "Academy": "Mat Factory",
+            "Status": "Approved",
+            "Group": "No-Gi / Beginner / Youth 10-11 / 60 - 69 lbs",
         },
         {
             "Name": "Taylor Smith",
@@ -888,14 +1007,26 @@ if data_ready:
         allow_entry_crossover=allow_entry_crossover,
         scoring_settings=scoring_settings,
     )
+    academy_conflict_recommendations = make_academy_conflict_recommendations(
+        df,
+        only_approved=only_approved,
+        min_target_size=min_target_size,
+        top_n=top_n,
+        allow_entry_crossover=allow_entry_crossover,
+        scoring_settings=scoring_settings,
+    )
 
-    c1, c2, c3 = st.columns(3)
+    academy_conflict_groups = summary[(summary["athletes"] >= 2) & (summary["academy_count"] == 1)].copy()
+
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         metric_card("Registrations", len(working_df), "Approved athletes currently analyzed")
     with c2:
         metric_card("Groups", len(summary), "Total active divisions/groups found")
     with c3:
         metric_card("Singles", len(singles), "Single-athlete divisions needing review")
+    with c4:
+        metric_card("Academy Conflicts", len(academy_conflict_groups), "2+ athlete divisions from one academy")
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("Single-Athlete Divisions")
@@ -906,6 +1037,18 @@ if data_ready:
         )
     else:
         st.markdown('<div class="success-card">No single-athlete groups found.</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Academy Conflict Divisions")
+    st.caption("These are divisions with two or more athletes, but all listed athletes are from one academy.")
+    if not academy_conflict_groups.empty:
+        st.dataframe(
+            academy_conflict_groups[["group", "athletes", "entry", "skill", "age", "weight", "names", "academies"]],
+            use_container_width=True,
+        )
+    else:
+        st.markdown('<div class="success-card">No same-academy conflict divisions found.</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
@@ -955,14 +1098,21 @@ if data_ready:
 
             st.download_button(
                 "Download Rank #1 Excel Report",
-                data=to_excel_bytes(rank1_all, singles, summary),
+                data=to_excel_bytes(
+                    rank1_all,
+                    singles,
+                    summary,
+                    academy_conflict_recommendations[
+                        academy_conflict_recommendations["Rank"] == 1
+                    ].copy(),
+                ),
                 file_name="ez_brackets_rank1_recommendations.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
             st.download_button(
                 "Download Full Excel Report",
-                data=to_excel_bytes(recommendations, singles, summary),
+                data=to_excel_bytes(recommendations, singles, summary, academy_conflict_recommendations),
                 file_name="ez_brackets_full_recommendations.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -971,6 +1121,35 @@ if data_ready:
             '<div class="small-muted">Color Key: Green = Excellent / Good | Yellow = Review | Red = Last Resort, Academy Warning, or Do Not Match | Gray = No Strong Match</div>',
             unsafe_allow_html=True,
         )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Academy Conflict Merge Options")
+    st.caption("Use these when a bracket has 2+ athletes from one academy and may be better merged with a nearby mixed bracket.")
+
+    if academy_conflict_recommendations.empty:
+        st.warning("No academy conflict merge options generated.")
+    else:
+        conflict_options = ["All Problem Divisions"] + sorted(
+            academy_conflict_recommendations["Problem Division"].dropna().unique().tolist()
+        )
+        selected_conflict = st.selectbox("Filter by Problem Division", conflict_options)
+
+        filtered_conflicts = academy_conflict_recommendations.copy()
+        if selected_conflict != "All Problem Divisions":
+            filtered_conflicts = filtered_conflicts[
+                filtered_conflicts["Problem Division"] == selected_conflict
+            ]
+
+        best_conflicts = filtered_conflicts[filtered_conflicts["Rank"] == 1].copy()
+        conflict_tab1, conflict_tab2 = st.tabs(["Best Conflict Fixes", "All Conflict Suggestions"])
+
+        with conflict_tab1:
+            st.dataframe(style_quality_rows(best_conflicts), use_container_width=True)
+
+        with conflict_tab2:
+            st.dataframe(style_quality_rows(filtered_conflicts), use_container_width=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
