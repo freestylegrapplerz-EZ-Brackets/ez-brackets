@@ -370,7 +370,31 @@ def academy_mix_after_move(single_academy, target_academies):
     return " + ".join(unique), len(unique)
 
 
-def quality_label(score):
+DEFAULT_SCORING_SETTINGS = {
+    "entry_crossover_penalty": 30,
+    "unknown_weight_penalty": 10,
+    "moderate_weight_penalty": 12,
+    "large_weight_penalty": 25,
+    "very_large_weight_penalty": 45,
+    "one_skill_penalty": 10,
+    "some_skill_penalty": 25,
+    "major_skill_penalty": 45,
+    "one_age_penalty": 10,
+    "some_age_penalty": 22,
+    "major_age_penalty": 40,
+    "same_academy_penalty": 35,
+    "mixed_academy_bonus": 4,
+    "target_size_two_bonus": 2,
+    "target_size_three_plus_bonus": 5,
+    "max_safe_weight_diff": 20,
+    "max_safe_age_diff": 1,
+    "max_safe_skill_diff": 1,
+}
+
+
+def quality_label(score, safety_flag=""):
+    if safety_flag:
+        return "Do Not Match"
     if score >= 85:
         return "Excellent"
     if score >= 75:
@@ -382,7 +406,9 @@ def quality_label(score):
     return "No strong match"
 
 
-def score_candidate(single, cand, allow_entry_crossover=False):
+def score_candidate(single, cand, allow_entry_crossover=False, scoring_settings=None):
+    settings = {**DEFAULT_SCORING_SETTINGS, **(scoring_settings or {})}
+
     if not allow_entry_crossover and not same_entry(single.get("entry_clean", ""), cand.get("entry", "")):
         return None
 
@@ -395,75 +421,127 @@ def score_candidate(single, cand, allow_entry_crossover=False):
 
     score = 100
     reasons = []
+    breakdown = ["Start: 100"]
+    safety_flags = []
 
     if not same_entry(single.get("entry_clean", ""), cand.get("entry", "")):
-        score -= 30
+        penalty = settings["entry_crossover_penalty"]
+        score -= penalty
         reasons.append("Gi/No-Gi crossover")
+        breakdown.append(f"Entry crossover: -{penalty}")
 
     if weight_diff == 999:
-        score -= 10
+        penalty = settings["unknown_weight_penalty"]
+        score -= penalty
         reasons.append("unknown weight difference")
+        breakdown.append(f"Unknown weight: -{penalty}")
     elif weight_diff <= 10:
         reasons.append(f"good weight match ({weight_diff:.1f} lbs)")
+        breakdown.append("Weight: 0")
     elif weight_diff <= 20:
-        score -= 12
+        penalty = settings["moderate_weight_penalty"]
+        score -= penalty
         reasons.append(f"moderate weight jump ({weight_diff:.1f} lbs)")
+        breakdown.append(f"Moderate weight jump: -{penalty}")
     elif weight_diff <= 30:
-        score -= 25
+        penalty = settings["large_weight_penalty"]
+        score -= penalty
         reasons.append(f"large weight jump ({weight_diff:.1f} lbs)")
+        breakdown.append(f"Large weight jump: -{penalty}")
     else:
-        score -= 45
+        penalty = settings["very_large_weight_penalty"]
+        score -= penalty
         reasons.append(f"very large weight jump ({weight_diff:.1f} lbs)")
+        breakdown.append(f"Very large weight jump: -{penalty}")
+
+    if weight_diff != 999 and weight_diff > settings["max_safe_weight_diff"]:
+        safety_flags.append(f"Weight gap over {settings['max_safe_weight_diff']} lbs")
 
     if skill_diff == 0:
         reasons.append("same skill/belt")
+        breakdown.append("Skill/Belt: 0")
     elif skill_diff == 1:
-        score -= 10
+        penalty = settings["one_skill_penalty"]
+        score -= penalty
         reasons.append("one skill/belt level difference")
+        breakdown.append(f"One skill/belt level: -{penalty}")
     elif skill_diff <= 3:
-        score -= 25
+        penalty = settings["some_skill_penalty"]
+        score -= penalty
         reasons.append("skill/belt difference")
+        breakdown.append(f"Skill/belt difference: -{penalty}")
     else:
-        score -= 45
+        penalty = settings["major_skill_penalty"]
+        score -= penalty
         reasons.append("major skill/belt difference")
+        breakdown.append(f"Major skill/belt difference: -{penalty}")
+
+    if skill_diff != 999 and skill_diff > settings["max_safe_skill_diff"]:
+        safety_flags.append(f"Skill gap over {settings['max_safe_skill_diff']} level(s)")
 
     if age_diff == 0:
         reasons.append("same age group")
+        breakdown.append("Age: 0")
     elif age_diff == 1:
-        score -= 10
+        penalty = settings["one_age_penalty"]
+        score -= penalty
         reasons.append("one age group difference")
+        breakdown.append(f"One age group: -{penalty}")
     elif age_diff <= 3:
-        score -= 22
+        penalty = settings["some_age_penalty"]
+        score -= penalty
         reasons.append("age group jump")
+        breakdown.append(f"Age group jump: -{penalty}")
     else:
-        score -= 40
+        penalty = settings["major_age_penalty"]
+        score -= penalty
         reasons.append("major age group jump")
+        breakdown.append(f"Major age group jump: -{penalty}")
+
+    if age_diff != 999 and age_diff > settings["max_safe_age_diff"]:
+        safety_flags.append(f"Age gap over {settings['max_safe_age_diff']} group(s)")
 
     academy_mix, academy_count = academy_mix_after_move(single.get("academy_clean", ""), cand.get("academies", ""))
 
     target_size = int(cand.get("athletes", 1))
     academy_warning = ""
     if academy_count <= 1 and target_size >= 1:
-        score -= 35
-        academy_warning = "⚠️ All same academy"
+        penalty = settings["same_academy_penalty"]
+        score -= penalty
+        academy_warning = "All same academy"
         reasons.append("would create/keep all-same-academy bracket")
+        breakdown.append(f"All same academy: -{penalty}")
     elif academy_count >= 2:
-        score += 4
+        bonus = settings["mixed_academy_bonus"]
+        score += bonus
         reasons.append("mixed academy bracket")
+        breakdown.append(f"Mixed academy: +{bonus}")
 
     if target_size >= 3:
-        score += 5
+        bonus = settings["target_size_three_plus_bonus"]
+        score += bonus
         reasons.append("target has 3+ athletes")
+        breakdown.append(f"Target has 3+ athletes: +{bonus}")
     elif target_size == 2:
-        score += 2
+        bonus = settings["target_size_two_bonus"]
+        score += bonus
         reasons.append("target has 2 athletes")
+        breakdown.append(f"Target has 2 athletes: +{bonus}")
 
     score = max(0, min(100, int(round(score))))
+    safety_flag = "; ".join(safety_flags)
 
-    return score, "; ".join(reasons), weight_diff, age_diff, skill_diff, academy_warning, academy_mix
+    return score, "; ".join(reasons), " | ".join(breakdown), safety_flag, weight_diff, age_diff, skill_diff, academy_warning, academy_mix
 
 
-def make_recommendations(df, only_approved=True, min_target_size=1, top_n=3, allow_entry_crossover=False):
+def make_recommendations(
+    df,
+    only_approved=True,
+    min_target_size=1,
+    top_n=3,
+    allow_entry_crossover=False,
+    scoring_settings=None,
+):
     working = df.copy()
 
     if only_approved and "approved_clean" in working.columns:
@@ -483,25 +561,27 @@ def make_recommendations(df, only_approved=True, min_target_size=1, top_n=3, all
 
         scored = []
         for _, cand in candidates.iterrows():
-            result = score_candidate(single, cand, allow_entry_crossover)
+            result = score_candidate(single, cand, allow_entry_crossover, scoring_settings)
             if result is None:
                 continue
 
-            score, why, weight_diff, age_diff, skill_diff, academy_warning, academy_mix = result
+            score, why, breakdown, safety_flag, weight_diff, age_diff, skill_diff, academy_warning, academy_mix = result
 
             scored.append({
                 "Rank": 0,
                 "Athlete": single["athlete_name"],
-                "Quality": quality_label(score),
+                "Quality": quality_label(score, safety_flag),
                 "Match Score": score,
                 "Current Division": group,
                 "Suggested Division": cand["group"],
                 "Target Athletes": cand["athletes"],
+                "Safety Flag": safety_flag,
                 "Academy Warning": academy_warning,
                 "Academy Mix": academy_mix,
                 "Weight Difference": round(weight_diff, 1) if weight_diff != 999 else "",
                 "Age Difference": age_diff if age_diff != 999 else "",
                 "Skill Difference": skill_diff if skill_diff != 999 else "",
+                "Scoring Breakdown": breakdown,
                 "Why": why,
                 "Current Entry": single.get("entry_clean", ""),
                 "Suggested Entry": cand.get("entry", ""),
@@ -525,8 +605,8 @@ def make_recommendations(df, only_approved=True, min_target_size=1, top_n=3, all
 
     first_cols = [
         "Rank", "Athlete", "Quality", "Match Score", "Current Division", "Suggested Division",
-        "Target Athletes", "Academy Warning", "Academy Mix", "Weight Difference",
-        "Age Difference", "Skill Difference", "Why",
+        "Target Athletes", "Safety Flag", "Academy Warning", "Academy Mix", "Weight Difference",
+        "Age Difference", "Skill Difference", "Scoring Breakdown", "Why",
     ]
     rest = [c for c in recs.columns if c not in first_cols]
     return recs[first_cols + rest]
@@ -536,8 +616,11 @@ def style_quality_rows(df):
     def row_style(row):
         warning = str(row.get("Academy Warning", "")).lower()
         quality = str(row.get("Quality", "")).lower()
+        safety = str(row.get("Safety Flag", "")).lower()
 
-        if "all same academy" in warning:
+        if safety:
+            color = "#fca5a5"
+        elif "all same academy" in warning:
             color = "#fecaca"
         elif "excellent" in quality:
             color = "#bbf7d0"
@@ -564,6 +647,36 @@ def to_excel_bytes(recommendations, singles, summary):
         singles.to_excel(writer, index=False, sheet_name="Singles")
         summary.to_excel(writer, index=False, sheet_name="All Groups")
     return output.getvalue()
+
+
+def sample_csv_bytes():
+    sample = pd.DataFrame([
+        {
+            "Name": "Alex Rivera",
+            "Academy": "Freestyle Grapplerz",
+            "Status": "Approved",
+            "Group": "No-Gi / Beginner / Teen / 120 - 130 lbs",
+        },
+        {
+            "Name": "Jordan Lee",
+            "Academy": "Northside MMA",
+            "Status": "Approved",
+            "Group": "No-Gi / Beginner / Teen / 130 - 140 lbs",
+        },
+        {
+            "Name": "Sam Patel",
+            "Academy": "West End Grappling",
+            "Status": "Approved",
+            "Group": "No-Gi / Beginner / Teen / 130 - 140 lbs",
+        },
+        {
+            "Name": "Taylor Smith",
+            "Academy": "Freestyle Grapplerz",
+            "Status": "Pending",
+            "Group": "Gi / White / Adult / 150 - 160 lbs",
+        },
+    ])
+    return sample.to_csv(index=False).encode("utf-8")
 
 
 def metric_card(label, value, help_text):
@@ -601,6 +714,13 @@ st.markdown(
 )
 
 
+st.download_button(
+    "Download sample CSV template",
+    data=sample_csv_bytes(),
+    file_name="ez_brackets_sample_template.csv",
+    mime="text/csv",
+)
+
 uploaded = st.file_uploader("Upload Smoothcomp registrations CSV", type=["csv"])
 
 if uploaded:
@@ -617,6 +737,22 @@ if uploaded:
         )
         top_n = st.slider("Top suggestions per single", min_value=1, max_value=5, value=3)
         allow_entry_crossover = st.checkbox("Show Gi/No-Gi crossover emergency options", value=False)
+        st.divider()
+        st.subheader("Safety Limits")
+        max_safe_weight_diff = st.slider("Do Not Match if weight gap is over:", 5, 60, 20, 5)
+        max_safe_age_diff = st.slider("Do Not Match if age gap is over:", 0, 5, 1)
+        max_safe_skill_diff = st.slider("Do Not Match if skill/belt gap is over:", 0, 5, 1)
+        st.subheader("Scoring Weights")
+        same_academy_penalty = st.slider("Same-academy penalty", 0, 60, 35, 5)
+        entry_crossover_penalty = st.slider("Gi/No-Gi crossover penalty", 0, 60, 30, 5)
+
+    scoring_settings = {
+        "max_safe_weight_diff": max_safe_weight_diff,
+        "max_safe_age_diff": max_safe_age_diff,
+        "max_safe_skill_diff": max_safe_skill_diff,
+        "same_academy_penalty": same_academy_penalty,
+        "entry_crossover_penalty": entry_crossover_penalty,
+    }
 
     working_df = df.copy()
     if only_approved and "approved_clean" in df.columns:
@@ -633,6 +769,7 @@ if uploaded:
         min_target_size=min_target_size,
         top_n=top_n,
         allow_entry_crossover=allow_entry_crossover,
+        scoring_settings=scoring_settings,
     )
 
     c1, c2, c3 = st.columns(3)
@@ -661,10 +798,17 @@ if uploaded:
     if recommendations.empty:
         st.warning("No recommendations generated.")
     else:
+        safety_warning_count = recommendations["Safety Flag"].astype(str).str.strip().astype(bool).sum()
+        if safety_warning_count:
+            st.markdown(
+                f'<div class="warning-card">{safety_warning_count} recommendation(s) exceed your safety limits and are marked Do Not Match.</div>',
+                unsafe_allow_html=True,
+            )
+
         academy_warning_count = recommendations["Academy Warning"].astype(str).str.contains("same academy", case=False, na=False).sum()
         if academy_warning_count:
             st.markdown(
-                f'<div class="warning-card">⚠️ {academy_warning_count} recommendation(s) include an academy-only bracket warning.</div>',
+                f'<div class="warning-card">{academy_warning_count} recommendation(s) include an academy-only bracket warning.</div>',
                 unsafe_allow_html=True,
             )
 
@@ -707,7 +851,7 @@ if uploaded:
             )
 
         st.markdown(
-            '<div class="small-muted">Color Key: 🟢 Excellent / Good · 🟡 Review · 🔴 Last Resort / Academy Warning · ⚪ No Strong Match</div>',
+            '<div class="small-muted">Color Key: Green = Excellent / Good | Yellow = Review | Red = Last Resort, Academy Warning, or Do Not Match | Gray = No Strong Match</div>',
             unsafe_allow_html=True,
         )
 
