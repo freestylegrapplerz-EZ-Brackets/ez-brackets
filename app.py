@@ -331,6 +331,46 @@ def normalize_dataframe(raw_df):
     return df
 
 
+def normalize_mapped_dataframe(raw_df, mapping):
+    df = raw_df.copy()
+
+    def mapped_series(field, default=""):
+        col = mapping.get(field, "")
+        if col and col in df.columns:
+            return df[col].astype(str).str.strip()
+        return pd.Series([default] * len(df), index=df.index)
+
+    df["athlete_name"] = mapped_series("name", "").replace("", pd.NA)
+    df["athlete_name"] = df["athlete_name"].fillna(pd.Series(df.index.astype(str), index=df.index))
+    df["approved_clean"] = mapped_series("status", "Approved")
+    df["academy_clean"] = mapped_series("academy", "")
+    df["entry_clean"] = mapped_series("entry", "")
+    df["skill_clean"] = mapped_series("skill", "")
+    df["age_clean"] = mapped_series("age", "")
+    df["weight_clean"] = mapped_series("weight", "")
+
+    group_col = mapping.get("group", "")
+    if group_col and group_col in df.columns:
+        df["group_clean"] = df[group_col].astype(str).str.strip()
+        parsed = df["group_clean"].apply(parse_group)
+        df["entry_clean"] = df["entry_clean"].where(df["entry_clean"].str.strip().ne(""), parsed.apply(lambda x: x[0]))
+        df["skill_clean"] = df["skill_clean"].where(df["skill_clean"].str.strip().ne(""), parsed.apply(lambda x: x[1]))
+        df["age_clean"] = df["age_clean"].where(df["age_clean"].str.strip().ne(""), parsed.apply(lambda x: x[2]))
+        df["weight_clean"] = df["weight_clean"].where(df["weight_clean"].str.strip().ne(""), parsed.apply(lambda x: x[3]))
+    else:
+        df["group_clean"] = (
+            df["entry_clean"].astype(str)
+            + " / "
+            + df["skill_clean"].astype(str)
+            + " / "
+            + df["age_clean"].astype(str)
+            + " / "
+            + df["weight_clean"].astype(str)
+        )
+
+    return df
+
+
 def group_summary(df):
     rows = []
     for group, g in df.groupby("group_clean", dropna=False):
@@ -649,8 +689,8 @@ def to_excel_bytes(recommendations, singles, summary):
     return output.getvalue()
 
 
-def sample_csv_bytes():
-    sample = pd.DataFrame([
+def demo_raw_dataframe():
+    return pd.DataFrame([
         {
             "Name": "Alex Rivera",
             "Academy": "Freestyle Grapplerz",
@@ -672,10 +712,20 @@ def sample_csv_bytes():
         {
             "Name": "Taylor Smith",
             "Academy": "Freestyle Grapplerz",
+            "Status": "Approved",
+            "Group": "No-Gi / Beginner / Teen / 140 - 150 lbs",
+        },
+        {
+            "Name": "Morgan Chen",
+            "Academy": "Eastside Combat",
             "Status": "Pending",
             "Group": "Gi / White / Adult / 150 - 160 lbs",
         },
     ])
+
+
+def sample_csv_bytes():
+    sample = demo_raw_dataframe()
     return sample.to_csv(index=False).encode("utf-8")
 
 
@@ -700,10 +750,11 @@ st.markdown(
             <div>
                 <div class="ez-title">EZ Brackets</div>
                 <div class="ez-subtitle">
-                    Smart tournament division matching for Smoothcomp CSVs. Find singles, rank merge options,
+                    Smart tournament division matching for Smoothcomp and universal CSVs. Find singles, rank merge options,
                     flag academy-only brackets, and export director-ready reports.
                 </div>
                 <span class="ez-badge">Single-athlete detection</span>
+                <span class="ez-badge">Universal CSV mapping</span>
                 <span class="ez-badge">Academy warnings</span>
                 <span class="ez-badge">Director reports</span>
             </div>
@@ -721,11 +772,77 @@ st.download_button(
     mime="text/csv",
 )
 
-uploaded = st.file_uploader("Upload Smoothcomp registrations CSV", type=["csv"])
+import_mode = st.radio(
+    "Choose how you want to load bracket data",
+    ["Smoothcomp Auto-Detect", "Universal CSV Mapping", "Use Demo Data"],
+    horizontal=True,
+)
 
-if uploaded:
-    raw_df = pd.read_csv(uploaded)
+uploaded = None
+data_ready = False
+df = None
+
+if import_mode == "Use Demo Data":
+    raw_df = demo_raw_dataframe()
     df = normalize_dataframe(raw_df)
+    data_ready = True
+    st.info("Demo data loaded. You can test the scoring and export flow without uploading a CSV.")
+else:
+    uploaded = st.file_uploader("Upload registrations CSV", type=["csv"])
+
+    if uploaded:
+        raw_df = pd.read_csv(uploaded)
+
+        if import_mode == "Smoothcomp Auto-Detect":
+            df = normalize_dataframe(raw_df)
+            data_ready = True
+        else:
+            columns = raw_df.columns.tolist()
+            optional_columns = ["-- Not in CSV --"] + columns
+
+            st.markdown('<div class="section-card">', unsafe_allow_html=True)
+            st.subheader("Map Your CSV Columns")
+            st.caption("Choose which columns in your file match the fields EZ Brackets needs.")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                name_col = st.selectbox("Athlete name column", columns)
+                academy_col = st.selectbox("Academy/team column", optional_columns)
+                status_col = st.selectbox("Status column", optional_columns)
+                group_col = st.selectbox("Existing division/group column", optional_columns)
+            with c2:
+                entry_col = st.selectbox("Entry type column, like Gi or No-Gi", optional_columns)
+                skill_col = st.selectbox("Skill/belt column", optional_columns)
+                age_col = st.selectbox("Age group column", optional_columns)
+                weight_col = st.selectbox("Weight class column", optional_columns)
+
+            def clean_mapping(value):
+                return "" if value == "-- Not in CSV --" else value
+
+            mapping = {
+                "name": name_col,
+                "academy": clean_mapping(academy_col),
+                "status": clean_mapping(status_col),
+                "group": clean_mapping(group_col),
+                "entry": clean_mapping(entry_col),
+                "skill": clean_mapping(skill_col),
+                "age": clean_mapping(age_col),
+                "weight": clean_mapping(weight_col),
+            }
+
+            has_group = bool(mapping["group"])
+            has_parts = all(mapping[field] for field in ["entry", "skill", "age", "weight"])
+
+            if has_group or has_parts:
+                df = normalize_mapped_dataframe(raw_df, mapping)
+                data_ready = True
+                st.success("Column mapping looks ready. Recommendations will use these fields.")
+            else:
+                st.warning("Map either an existing division/group column or all four fields: entry type, skill/belt, age group, and weight class.")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+if data_ready:
 
     with st.sidebar:
         st.header("Settings")
@@ -859,6 +976,6 @@ if uploaded:
 
 else:
     st.markdown(
-        '<div class="section-card">Upload your Smoothcomp CSV to begin analyzing divisions.</div>',
+        '<div class="section-card">Upload a Smoothcomp CSV, map columns from another registration system, or choose demo data to begin analyzing divisions.</div>',
         unsafe_allow_html=True,
     )

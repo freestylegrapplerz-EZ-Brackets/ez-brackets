@@ -2,11 +2,13 @@
 
 EZ Brackets is a Streamlit app for tournament directors who need to find single-athlete divisions in Smoothcomp registration exports and identify the best possible bracket merge options.
 
-Built for Freestyle Grapplerz, the app reviews Smoothcomp CSV data, detects divisions with only one athlete, scores possible matches, flags academy-only matchups, marks unsafe jumps as Do Not Match, and exports director-ready Excel reports.
+Built for Freestyle Grapplerz, the app reviews Smoothcomp CSV data or mapped CSV files from other registration systems, detects divisions with only one athlete, scores possible matches, flags academy-only matchups, marks unsafe jumps as Do Not Match, and exports director-ready Excel reports.
 
 ## What It Does
 
 - Upload a Smoothcomp registrations CSV.
+- Map columns from other CSV-based registration systems.
+- Try the app instantly with built-in demo data.
 - Find single-athlete divisions.
 - Suggest possible merge divisions.
 - Score matches by entry type, weight, age, skill or belt, bracket size, and academy mix.
@@ -41,6 +43,8 @@ The division/group text should follow a Smoothcomp-style pattern such as:
 ```text
 No-Gi / Beginner / Teen / 120 - 130 lbs
 ```
+
+For non-Smoothcomp files, choose Universal CSV Mapping inside the app and map your CSV columns to athlete name, academy/team, entry type, skill/belt, age group, weight class, status, or an existing division/group field.
 
 ## Requirements
 
