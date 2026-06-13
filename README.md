@@ -14,7 +14,11 @@ Built for Freestyle Grapplerz, the app reviews Smoothcomp CSV data or mapped CSV
 - Suggest possible merge divisions.
 - Score matches by entry type, weight, age, skill or belt, bracket size, and academy mix.
 - Let staff adjust safety limits and scoring weights.
+- Choose rule presets for kids, adults, emergency merges, or Freestyle Grapplerz rules.
 - Show a scoring breakdown for each recommendation.
+- Preview before/after merge impact.
+- Build a director action plan.
+- Download CSV and Excel reports.
 - Export rank-one and full Excel reports.
 
 ## Match Scoring

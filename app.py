@@ -432,6 +432,38 @@ DEFAULT_SCORING_SETTINGS = {
 }
 
 
+SCORING_PRESETS = {
+    "Kids Conservative": {
+        "max_safe_weight_diff": 10,
+        "max_safe_age_diff": 0,
+        "max_safe_skill_diff": 0,
+        "same_academy_penalty": 45,
+        "entry_crossover_penalty": 45,
+    },
+    "Adult Standard": {
+        "max_safe_weight_diff": 20,
+        "max_safe_age_diff": 1,
+        "max_safe_skill_diff": 1,
+        "same_academy_penalty": 35,
+        "entry_crossover_penalty": 30,
+    },
+    "Emergency Merge Mode": {
+        "max_safe_weight_diff": 35,
+        "max_safe_age_diff": 2,
+        "max_safe_skill_diff": 2,
+        "same_academy_penalty": 20,
+        "entry_crossover_penalty": 20,
+    },
+    "Freestyle Grapplerz Rules": {
+        "max_safe_weight_diff": 20,
+        "max_safe_age_diff": 1,
+        "max_safe_skill_diff": 1,
+        "same_academy_penalty": 40,
+        "entry_crossover_penalty": 35,
+    },
+}
+
+
 def quality_label(score, safety_flag=""):
     if safety_flag:
         return "Do Not Match"
@@ -444,6 +476,31 @@ def quality_label(score, safety_flag=""):
     if score >= 40:
         return "Last resort"
     return "No strong match"
+
+
+def risk_badge(score, safety_flag=""):
+    if safety_flag:
+        return "Do Not Match"
+    if score >= 85:
+        return "Safe Match"
+    if score >= 70:
+        return "Needs Review"
+    if score >= 45:
+        return "Emergency Only"
+    return "Do Not Match"
+
+
+def action_text(action_type, source, target, quality):
+    if quality == "Do Not Match":
+        return f"Do not move {source} into {target} without director approval."
+    if action_type == "single":
+        return f"Move athlete from {source} into {target}."
+    return f"Merge problem division {source} into {target}."
+
+
+def before_after_text(source_label, source_count, target_label, target_count):
+    after_count = int(source_count) + int(target_count)
+    return f"Before: {source_label} has {source_count}; {target_label} has {target_count}. After: {target_label} would have {after_count}."
 
 
 def score_candidate(single, cand, allow_entry_crossover=False, scoring_settings=None):
@@ -607,13 +664,17 @@ def make_recommendations(
 
             score, why, breakdown, safety_flag, weight_diff, age_diff, skill_diff, academy_warning, academy_mix = result
 
+            risk = risk_badge(score, safety_flag)
             scored.append({
                 "Rank": 0,
                 "Athlete": single["athlete_name"],
                 "Quality": quality_label(score, safety_flag),
+                "Risk Badge": risk,
+                "Action Plan": action_text("single", group, cand["group"], risk),
                 "Match Score": score,
                 "Current Division": group,
                 "Suggested Division": cand["group"],
+                "Before / After": before_after_text(group, 1, cand["group"], cand["athletes"]),
                 "Target Athletes": cand["athletes"],
                 "Safety Flag": safety_flag,
                 "Academy Warning": academy_warning,
@@ -644,8 +705,9 @@ def make_recommendations(
         return recs
 
     first_cols = [
-        "Rank", "Athlete", "Quality", "Match Score", "Current Division", "Suggested Division",
-        "Target Athletes", "Safety Flag", "Academy Warning", "Academy Mix", "Weight Difference",
+        "Rank", "Athlete", "Quality", "Risk Badge", "Action Plan", "Match Score",
+        "Current Division", "Suggested Division", "Before / After", "Target Athletes",
+        "Safety Flag", "Academy Warning", "Academy Mix", "Weight Difference",
         "Age Difference", "Skill Difference", "Scoring Breakdown", "Why",
     ]
     rest = [c for c in recs.columns if c not in first_cols]
@@ -702,13 +764,17 @@ def make_academy_conflict_recommendations(
                 why = why + "; target is also same-academy or missing academy variety"
                 breakdown = breakdown + " | Target lacks academy variety: -10"
 
+            risk = risk_badge(score, safety_flag)
             scored.append({
                 "Rank": 0,
                 "Issue": "All same academy",
                 "Quality": quality_label(score, safety_flag),
+                "Risk Badge": risk,
+                "Action Plan": action_text("conflict", problem["group"], cand["group"], risk),
                 "Match Score": score,
                 "Problem Division": problem["group"],
                 "Suggested Division": cand["group"],
+                "Before / After": before_after_text(problem["group"], problem["athletes"], cand["group"], cand["athletes"]),
                 "Problem Athletes": problem["athletes"],
                 "Target Athletes": cand["athletes"],
                 "Problem Academy": problem["academies"],
@@ -742,8 +808,9 @@ def make_academy_conflict_recommendations(
         return recs
 
     first_cols = [
-        "Rank", "Issue", "Quality", "Match Score", "Problem Division", "Suggested Division",
-        "Problem Athletes", "Target Athletes", "Problem Academy", "Academy Mix After Merge",
+        "Rank", "Issue", "Quality", "Risk Badge", "Action Plan", "Match Score",
+        "Problem Division", "Suggested Division", "Before / After", "Problem Athletes",
+        "Target Athletes", "Problem Academy", "Academy Mix After Merge",
         "Safety Flag", "Weight Difference", "Age Difference", "Skill Difference",
         "Scoring Breakdown", "Why",
     ]
@@ -779,9 +846,39 @@ def style_quality_rows(df):
     return df.style.apply(row_style, axis=1)
 
 
+def build_action_plan(recommendations, academy_conflicts=None):
+    frames = []
+
+    if recommendations is not None and not recommendations.empty:
+        single_cols = [
+            "Action Plan", "Risk Badge", "Quality", "Match Score", "Athlete",
+            "Current Division", "Suggested Division", "Before / After", "Why",
+        ]
+        frames.append(recommendations[[c for c in single_cols if c in recommendations.columns]].copy())
+
+    if academy_conflicts is not None and not academy_conflicts.empty:
+        conflict_cols = [
+            "Action Plan", "Risk Badge", "Quality", "Match Score", "Problem Division",
+            "Suggested Division", "Before / After", "Problem Academy", "Why",
+        ]
+        frames.append(academy_conflicts[[c for c in conflict_cols if c in academy_conflicts.columns]].copy())
+
+    if not frames:
+        return pd.DataFrame()
+
+    return pd.concat(frames, ignore_index=True)
+
+
+def to_csv_bytes(df):
+    return df.to_csv(index=False).encode("utf-8")
+
+
 def to_excel_bytes(recommendations, singles, summary, academy_conflicts=None):
     output = BytesIO()
+    action_plan = build_action_plan(recommendations, academy_conflicts)
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        if not action_plan.empty:
+            action_plan.to_excel(writer, index=False, sheet_name="Action Plan")
         recommendations.to_excel(writer, index=False, sheet_name="Recommendations")
         if academy_conflicts is not None and not academy_conflicts.empty:
             academy_conflicts.to_excel(writer, index=False, sheet_name="Academy Conflicts")
@@ -843,6 +940,65 @@ def demo_raw_dataframe():
     ])
 
 
+def universal_demo_dataframe():
+    return pd.DataFrame([
+        {
+            "Athlete Name": "Alex Rivera",
+            "Team": "Freestyle Grapplerz",
+            "Registration Status": "Approved",
+            "Match Type": "No-Gi",
+            "Experience Level": "Beginner",
+            "Age Group": "Teen",
+            "Weight Class": "120 - 130 lbs",
+        },
+        {
+            "Athlete Name": "Jordan Lee",
+            "Team": "Oliveira Grappling",
+            "Registration Status": "Approved",
+            "Match Type": "No-Gi",
+            "Experience Level": "Beginner",
+            "Age Group": "Youth 10-11",
+            "Weight Class": "50 - 59 lbs",
+        },
+        {
+            "Athlete Name": "Sam Patel",
+            "Team": "Oliveira Grappling",
+            "Registration Status": "Approved",
+            "Match Type": "No-Gi",
+            "Experience Level": "Beginner",
+            "Age Group": "Youth 10-11",
+            "Weight Class": "50 - 59 lbs",
+        },
+        {
+            "Athlete Name": "Cameron Diaz",
+            "Team": "West End Grappling",
+            "Registration Status": "Approved",
+            "Match Type": "No-Gi",
+            "Experience Level": "Beginner",
+            "Age Group": "Youth 10-11",
+            "Weight Class": "60 - 69 lbs",
+        },
+        {
+            "Athlete Name": "Devon Brooks",
+            "Team": "Northside MMA",
+            "Registration Status": "Approved",
+            "Match Type": "No-Gi",
+            "Experience Level": "Beginner",
+            "Age Group": "Youth 10-11",
+            "Weight Class": "60 - 69 lbs",
+        },
+        {
+            "Athlete Name": "Eli Carter",
+            "Team": "Mat Factory",
+            "Registration Status": "Approved",
+            "Match Type": "No-Gi",
+            "Experience Level": "Beginner",
+            "Age Group": "Youth 10-11",
+            "Weight Class": "60 - 69 lbs",
+        },
+    ])
+
+
 def sample_csv_bytes():
     sample = demo_raw_dataframe()
     return sample.to_csv(index=False).encode("utf-8")
@@ -893,7 +1049,7 @@ st.download_button(
 
 import_mode = st.radio(
     "Choose how you want to load bracket data",
-    ["Smoothcomp Auto-Detect", "Universal CSV Mapping", "Use Demo Data"],
+    ["Smoothcomp Auto-Detect", "Universal CSV Mapping", "Use Sample Smoothcomp Data", "Use Sample Universal Data"],
     horizontal=True,
 )
 
@@ -901,11 +1057,26 @@ uploaded = None
 data_ready = False
 df = None
 
-if import_mode == "Use Demo Data":
+if import_mode == "Use Sample Smoothcomp Data":
     raw_df = demo_raw_dataframe()
     df = normalize_dataframe(raw_df)
     data_ready = True
-    st.info("Demo data loaded. You can test the scoring and export flow without uploading a CSV.")
+    st.info("Sample Smoothcomp-style data loaded. You can test scoring, academy conflicts, and exports without uploading a CSV.")
+elif import_mode == "Use Sample Universal Data":
+    raw_df = universal_demo_dataframe()
+    mapping = {
+        "name": "Athlete Name",
+        "academy": "Team",
+        "status": "Registration Status",
+        "group": "",
+        "entry": "Match Type",
+        "skill": "Experience Level",
+        "age": "Age Group",
+        "weight": "Weight Class",
+    }
+    df = normalize_mapped_dataframe(raw_df, mapping)
+    data_ready = True
+    st.info("Sample universal data loaded. This shows how separate CSV columns can be mapped into EZ Brackets.")
 else:
     uploaded = st.file_uploader("Upload registrations CSV", type=["csv"])
 
@@ -974,13 +1145,20 @@ if data_ready:
         top_n = st.slider("Top suggestions per single", min_value=1, max_value=5, value=3)
         allow_entry_crossover = st.checkbox("Show Gi/No-Gi crossover emergency options", value=False)
         st.divider()
+        st.subheader("Rule Preset")
+        rule_preset = st.selectbox(
+            "Choose scoring preset",
+            list(SCORING_PRESETS.keys()),
+            index=1,
+        )
+        preset = SCORING_PRESETS[rule_preset]
         st.subheader("Safety Limits")
-        max_safe_weight_diff = st.slider("Do Not Match if weight gap is over:", 5, 60, 20, 5)
-        max_safe_age_diff = st.slider("Do Not Match if age gap is over:", 0, 5, 1)
-        max_safe_skill_diff = st.slider("Do Not Match if skill/belt gap is over:", 0, 5, 1)
+        max_safe_weight_diff = st.slider("Do Not Match if weight gap is over:", 5, 60, preset["max_safe_weight_diff"], 5)
+        max_safe_age_diff = st.slider("Do Not Match if age gap is over:", 0, 5, preset["max_safe_age_diff"])
+        max_safe_skill_diff = st.slider("Do Not Match if skill/belt gap is over:", 0, 5, preset["max_safe_skill_diff"])
         st.subheader("Scoring Weights")
-        same_academy_penalty = st.slider("Same-academy penalty", 0, 60, 35, 5)
-        entry_crossover_penalty = st.slider("Gi/No-Gi crossover penalty", 0, 60, 30, 5)
+        same_academy_penalty = st.slider("Same-academy penalty", 0, 60, preset["same_academy_penalty"], 5)
+        entry_crossover_penalty = st.slider("Gi/No-Gi crossover penalty", 0, 60, preset["entry_crossover_penalty"], 5)
 
     scoring_settings = {
         "max_safe_weight_diff": max_safe_weight_diff,
@@ -1017,6 +1195,17 @@ if data_ready:
     )
 
     academy_conflict_groups = summary[(summary["athletes"] >= 2) & (summary["academy_count"] == 1)].copy()
+    rank1_recommendations = recommendations[recommendations["Rank"] == 1].copy() if not recommendations.empty else pd.DataFrame()
+    rank1_conflicts = academy_conflict_recommendations[
+        academy_conflict_recommendations["Rank"] == 1
+    ].copy() if not academy_conflict_recommendations.empty else pd.DataFrame()
+    action_plan = build_action_plan(rank1_recommendations, rank1_conflicts)
+    high_confidence_count = 0
+    do_not_match_count = 0
+    for report in [rank1_recommendations, rank1_conflicts]:
+        if not report.empty and "Risk Badge" in report.columns:
+            high_confidence_count += report["Risk Badge"].astype(str).eq("Safe Match").sum()
+            do_not_match_count += report["Risk Badge"].astype(str).eq("Do Not Match").sum()
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1027,6 +1216,23 @@ if data_ready:
         metric_card("Singles", len(singles), "Single-athlete divisions needing review")
     with c4:
         metric_card("Academy Conflicts", len(academy_conflict_groups), "2+ athlete divisions from one academy")
+
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("Event Summary")
+    summary_cols = st.columns(4)
+    with summary_cols[0]:
+        st.metric("Rank #1 Actions", len(action_plan))
+    with summary_cols[1]:
+        st.metric("Safe Matches", int(high_confidence_count))
+    with summary_cols[2]:
+        st.metric("Needs Director Review", int(do_not_match_count))
+    with summary_cols[3]:
+        st.metric("Rule Preset", rule_preset)
+    st.caption("Use this as a quick pre-bracket checklist before publishing divisions.")
+    if not action_plan.empty:
+        with st.expander("Preview Director Action Plan", expanded=False):
+            st.dataframe(action_plan, use_container_width=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.subheader("Single-Athlete Divisions")
@@ -1093,8 +1299,20 @@ if data_ready:
 
         with tab3:
             st.markdown("### Director Report")
-            st.write("Download a report your staff can use to make bracket updates inside Smoothcomp.")
+            st.write("Download reports your staff can use to make bracket updates.")
             rank1_all = recommendations[recommendations["Rank"] == 1].copy()
+            rank1_conflicts = academy_conflict_recommendations[
+                academy_conflict_recommendations["Rank"] == 1
+            ].copy() if not academy_conflict_recommendations.empty else pd.DataFrame()
+            export_action_plan = build_action_plan(rank1_all, rank1_conflicts)
+
+            if not export_action_plan.empty:
+                st.download_button(
+                    "Download Action Plan CSV",
+                    data=to_csv_bytes(export_action_plan),
+                    file_name="ez_brackets_action_plan.csv",
+                    mime="text/csv",
+                )
 
             st.download_button(
                 "Download Rank #1 Excel Report",
@@ -1102,13 +1320,26 @@ if data_ready:
                     rank1_all,
                     singles,
                     summary,
-                    academy_conflict_recommendations[
-                        academy_conflict_recommendations["Rank"] == 1
-                    ].copy(),
+                    rank1_conflicts,
                 ),
                 file_name="ez_brackets_rank1_recommendations.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
+
+            st.download_button(
+                "Download All Suggestions CSV",
+                data=to_csv_bytes(recommendations),
+                file_name="ez_brackets_all_single_suggestions.csv",
+                mime="text/csv",
+            )
+
+            if not academy_conflict_recommendations.empty:
+                st.download_button(
+                    "Download Academy Conflict CSV",
+                    data=to_csv_bytes(academy_conflict_recommendations),
+                    file_name="ez_brackets_academy_conflicts.csv",
+                    mime="text/csv",
+                )
 
             st.download_button(
                 "Download Full Excel Report",
