@@ -43,6 +43,7 @@ st.markdown(
     }
 
     .ez-logo {
+        position: relative;
         width: 64px;
         height: 64px;
         border-radius: 18px;
@@ -54,6 +55,17 @@ st.markdown(
         font-weight: 900;
         color: white;
         box-shadow: 0 10px 30px rgba(34,197,94,0.35);
+    }
+
+    .ez-logo-tm {
+        position: absolute;
+        top: 7px;
+        right: 7px;
+        font-size: 8px;
+        line-height: 1;
+        font-weight: 900;
+        color: #ffffff;
+        opacity: 0.95;
     }
 
     .ez-title {
@@ -1021,7 +1033,7 @@ st.markdown(
     '''
     <div class="ez-hero">
         <div class="ez-logo-row">
-            <div class="ez-logo">EZ</div>
+            <div class="ez-logo">EZ<span class="ez-logo-tm">TM</span></div>
             <div>
                 <div class="ez-title">EZ Brackets</div>
                 <div class="ez-subtitle">
